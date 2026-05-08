@@ -54,6 +54,11 @@ quote() {
   printf '%q' "$1"
 }
 
+remote_bash() {
+  local script="$1"
+  ssh "$REMOTE_HOST" "/bin/bash -lc $(quote "$script")"
+}
+
 echo "Deploying $COMMIT to $REMOTE_HOST:$REMOTE_APP_DIR"
 ssh "$REMOTE_HOST" mkdir -p "$REMOTE_APP_DIR" "$(dirname "$REMOTE_ENV_FILE")" "$(dirname "$REMOTE_PLIST")"
 
@@ -89,11 +94,10 @@ if ! ssh "$REMOTE_HOST" test -f "$REMOTE_ENV_FILE"; then
     printf 'HUBSPOT_ACCESS_TOKEN=%s\n' "$HUBSPOT_ACCESS_TOKEN_VALUE"
   } > "$ENV_TMP"
   scp -q "$ENV_TMP" "$REMOTE_HOST:$REMOTE_ENV_FILE.tmp"
-  ssh "$REMOTE_HOST" /bin/bash -lc \
-    "chmod 600 $(quote "$REMOTE_ENV_FILE.tmp") && mv $(quote "$REMOTE_ENV_FILE.tmp") $(quote "$REMOTE_ENV_FILE")"
+  remote_bash "chmod 600 $(quote "$REMOTE_ENV_FILE.tmp") && mv $(quote "$REMOTE_ENV_FILE.tmp") $(quote "$REMOTE_ENV_FILE")"
 fi
 
-ssh "$REMOTE_HOST" /bin/bash -lc "
+REMOTE_BUILD_SCRIPT="
   set -euo pipefail
   cd $(quote "$REMOTE_APP_DIR")
   set -a
@@ -106,6 +110,7 @@ ssh "$REMOTE_HOST" /bin/bash -lc "
   npm run build
   printf '%s\n' $(quote "$COMMIT") > .deployed-version
 "
+remote_bash "$REMOTE_BUILD_SCRIPT"
 
 PLIST_TMP="$(mktemp)"
 cat > "$PLIST_TMP" <<PLIST
@@ -136,12 +141,13 @@ PLIST
 
 scp -q "$PLIST_TMP" "$REMOTE_HOST:$REMOTE_PLIST"
 
-ssh "$REMOTE_HOST" /bin/bash -lc "
+REMOTE_LAUNCH_SCRIPT="
   set -euo pipefail
   plutil -lint $(quote "$REMOTE_PLIST") >/dev/null
   launchctl bootout \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
   launchctl bootstrap \"gui/\$(id -u)\" $(quote "$REMOTE_PLIST")
   launchctl kickstart -k \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
 "
+remote_bash "$REMOTE_LAUNCH_SCRIPT"
 
 echo "Deployed $COMMIT"
