@@ -47,8 +47,12 @@ fi
 
 COMMIT="$(git rev-parse HEAD)"
 TRACKED_FILES="$(mktemp)"
-trap 'rm -f "$TRACKED_FILES" "${ENV_TMP:-}"' EXIT
+trap 'rm -f "$TRACKED_FILES" "${ENV_TMP:-}" "${PLIST_TMP:-}"' EXIT
 git ls-files -z > "$TRACKED_FILES"
+
+quote() {
+  printf '%q' "$1"
+}
 
 echo "Deploying $COMMIT to $REMOTE_HOST:$REMOTE_APP_DIR"
 ssh "$REMOTE_HOST" mkdir -p "$REMOTE_APP_DIR" "$(dirname "$REMOTE_ENV_FILE")" "$(dirname "$REMOTE_PLIST")"
@@ -85,37 +89,26 @@ if ! ssh "$REMOTE_HOST" test -f "$REMOTE_ENV_FILE"; then
     printf 'HUBSPOT_ACCESS_TOKEN=%s\n' "$HUBSPOT_ACCESS_TOKEN_VALUE"
   } > "$ENV_TMP"
   scp -q "$ENV_TMP" "$REMOTE_HOST:$REMOTE_ENV_FILE.tmp"
-  ssh "$REMOTE_HOST" chmod 600 "$REMOTE_ENV_FILE.tmp" "&&" mv "$REMOTE_ENV_FILE.tmp" "$REMOTE_ENV_FILE"
+  ssh "$REMOTE_HOST" /bin/bash -lc \
+    "chmod 600 $(quote "$REMOTE_ENV_FILE.tmp") && mv $(quote "$REMOTE_ENV_FILE.tmp") $(quote "$REMOTE_ENV_FILE")"
 fi
 
-ssh "$REMOTE_HOST" bash -s -- "$REMOTE_APP_DIR" "$REMOTE_ENV_FILE" "$COMMIT" "$BASE_PATH" <<'REMOTE_BUILD'
-set -euo pipefail
-app_dir="$1"
-env_file="$2"
-commit="$3"
-base_path="$4"
+ssh "$REMOTE_HOST" /bin/bash -lc "
+  set -euo pipefail
+  cd $(quote "$REMOTE_APP_DIR")
+  set -a
+  source $(quote "$REMOTE_ENV_FILE")
+  set +a
+  export DEPLOYMENT_MODE=\"\${DEPLOYMENT_MODE:-cloud}\"
+  export NEXT_PUBLIC_DEPLOYMENT_MODE=\"\${NEXT_PUBLIC_DEPLOYMENT_MODE:-cloud}\"
+  export NEXT_PUBLIC_BASE_PATH=\"\${NEXT_PUBLIC_BASE_PATH:-$BASE_PATH}\"
+  npm ci
+  npm run build
+  printf '%s\n' $(quote "$COMMIT") > .deployed-version
+"
 
-cd "$app_dir"
-set -a
-# shellcheck disable=SC1090
-source "$env_file"
-set +a
-export DEPLOYMENT_MODE="${DEPLOYMENT_MODE:-cloud}"
-export NEXT_PUBLIC_DEPLOYMENT_MODE="${NEXT_PUBLIC_DEPLOYMENT_MODE:-cloud}"
-export NEXT_PUBLIC_BASE_PATH="${NEXT_PUBLIC_BASE_PATH:-$base_path}"
-
-npm ci
-npm run build
-printf '%s\n' "$commit" > .deployed-version
-REMOTE_BUILD
-
-ssh "$REMOTE_HOST" bash -s -- "$REMOTE_APP_DIR" "$REMOTE_PLIST" "$LAUNCH_LABEL" <<'REMOTE_LAUNCH'
-set -euo pipefail
-app_dir="$1"
-plist="$2"
-label="$3"
-
-cat > "$plist" <<PLIST
+PLIST_TMP="$(mktemp)"
+cat > "$PLIST_TMP" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
   "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -125,10 +118,10 @@ cat > "$plist" <<PLIST
   <string>$label</string>
   <key>ProgramArguments</key>
   <array>
-    <string>$app_dir/scripts/run-mac-mini.sh</string>
+    <string>$REMOTE_APP_DIR/scripts/run-mac-mini.sh</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>$app_dir</string>
+  <string>$REMOTE_APP_DIR</string>
   <key>RunAtLoad</key>
   <true/>
   <key>KeepAlive</key>
@@ -141,9 +134,14 @@ cat > "$plist" <<PLIST
 </plist>
 PLIST
 
-launchctl bootout "gui/$(id -u)/$label" >/dev/null 2>&1 || true
-launchctl bootstrap "gui/$(id -u)" "$plist"
-launchctl kickstart -k "gui/$(id -u)/$label" >/dev/null 2>&1 || true
-REMOTE_LAUNCH
+scp -q "$PLIST_TMP" "$REMOTE_HOST:$REMOTE_PLIST"
+
+ssh "$REMOTE_HOST" /bin/bash -lc "
+  set -euo pipefail
+  plutil -lint $(quote "$REMOTE_PLIST") >/dev/null
+  launchctl bootout \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
+  launchctl bootstrap \"gui/\$(id -u)\" $(quote "$REMOTE_PLIST")
+  launchctl kickstart -k \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
+"
 
 echo "Deployed $COMMIT"
