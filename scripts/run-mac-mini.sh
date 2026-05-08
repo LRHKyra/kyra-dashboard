@@ -21,4 +21,11 @@ if [[ -z "${APP_VERSION:-}" && -f .deployed-version ]]; then
   APP_VERSION="$(tr -d '\n' < .deployed-version)"
 fi
 
-exec npm start -- -H 127.0.0.1 -p "$PORT"
+export HOSTNAME="${DASHBOARD_HOSTNAME:-127.0.0.1}"
+export PORT
+
+if [[ -f .next/standalone/server.js ]]; then
+  exec node .next/standalone/server.js
+fi
+
+exec npm start -- -H "$HOSTNAME" -p "$PORT"
