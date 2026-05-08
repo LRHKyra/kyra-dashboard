@@ -144,9 +144,14 @@ scp -q "$PLIST_TMP" "$REMOTE_HOST:$REMOTE_PLIST"
 REMOTE_LAUNCH_SCRIPT="
   set -euo pipefail
   plutil -lint $(quote "$REMOTE_PLIST") >/dev/null
-  launchctl bootout \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
-  launchctl bootstrap \"gui/\$(id -u)\" $(quote "$REMOTE_PLIST")
-  launchctl kickstart -k \"gui/\$(id -u)/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
+  uid=\"\$(id -u)\"
+  launchctl bootout \"gui/\$uid/$LAUNCH_LABEL\" >/dev/null 2>&1 || \
+    launchctl bootout \"gui/\$uid\" $(quote "$REMOTE_PLIST") >/dev/null 2>&1 || true
+  sleep 1
+  if ! launchctl bootstrap \"gui/\$uid\" $(quote "$REMOTE_PLIST") >/dev/null 2>&1; then
+    launchctl kickstart -k \"gui/\$uid/$LAUNCH_LABEL\"
+  fi
+  launchctl kickstart -k \"gui/\$uid/$LAUNCH_LABEL\" >/dev/null 2>&1 || true
 "
 remote_bash "$REMOTE_LAUNCH_SCRIPT"
 
