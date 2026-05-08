@@ -120,7 +120,7 @@ cat > "$PLIST_TMP" <<PLIST
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>$label</string>
+  <string>$LAUNCH_LABEL</string>
   <key>ProgramArguments</key>
   <array>
     <string>$REMOTE_APP_DIR/scripts/run-mac-mini.sh</string>
