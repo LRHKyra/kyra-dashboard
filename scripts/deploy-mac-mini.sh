@@ -108,7 +108,11 @@ REMOTE_BUILD_SCRIPT="
   export NEXT_PUBLIC_BASE_PATH=\"\${NEXT_PUBLIC_BASE_PATH:-$BASE_PATH}\"
   npm ci
   npm run build
+  rm -rf .next/standalone/.next/static
+  mkdir -p .next/standalone/.next
+  cp -R .next/static .next/standalone/.next/static
   printf '%s\n' $(quote "$COMMIT") > .deployed-version
+  printf '%s\n' $(quote "$COMMIT") > .next/standalone/.deployed-version
 "
 remote_bash "$REMOTE_BUILD_SCRIPT"
 
