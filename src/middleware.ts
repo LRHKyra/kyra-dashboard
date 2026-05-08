@@ -9,7 +9,7 @@ const basePath = rawBasePath && rawBasePath !== "/" ? rawBasePath.replace(/\/$/,
 const ALWAYS_ALLOWED = ["/_next/", "/favicon.ico", "/icon.svg"];
 
 /** Routes accessible in cloud mode. */
-const CLOUD_ALLOWED = ["/pipeline", "/api/hubspot/pipeline"];
+const CLOUD_ALLOWED = ["/pipeline", "/api/hubspot/pipeline", "/api/version"];
 
 function stripBasePath(pathname: string): string {
   if (!basePath || pathname === basePath) {
@@ -43,7 +43,7 @@ export function middleware(request: NextRequest) {
 
   // Everything else → redirect to /pipeline
   const url = request.nextUrl.clone();
-  url.pathname = `${basePath}/pipeline`;
+  url.pathname = "/pipeline";
   return NextResponse.redirect(url);
 }
 
