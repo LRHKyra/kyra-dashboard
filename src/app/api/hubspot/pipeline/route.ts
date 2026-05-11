@@ -100,6 +100,7 @@ export async function GET() {
       "estimated_annual_revenue", "total_member_lives",
       "employees_quoted", "source_channel",
       "hs_deal_stage_probability", "closedate",
+      "renewal_date",
       "hubspot_owner_id",
     ];
 
@@ -136,6 +137,7 @@ export async function GET() {
         employeesQuoted: parseInt(props.employees_quoted) || 0,
         sourceChannel: props.source_channel || "Unknown",
         closeDate: props.closedate || null,
+        effectiveDate: props.renewal_date || null,
       };
 
       if (stageInfo.bucket === "won") salesWon.push(mapped);

@@ -21,6 +21,7 @@ export interface SalesDeal {
   employeesQuoted: number;
   sourceChannel: string;
   closeDate: string | null;
+  effectiveDate: string | null;
 }
 
 export interface StageCount {

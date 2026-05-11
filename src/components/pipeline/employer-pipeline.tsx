@@ -1,5 +1,7 @@
 "use client";
 
+import { useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ChevronsUpDown } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -10,7 +12,134 @@ import {
 } from "recharts";
 import type { SalesDeal, StageCount } from "./types";
 
+type DealSortKey =
+  | "name"
+  | "stage"
+  | "effectiveDate"
+  | "revenue"
+  | "memberLives"
+  | "probability"
+  | "weightedRevenue";
+
+type SortDirection = "asc" | "desc";
+
+type DealSort = {
+  key: DealSortKey;
+  direction: SortDirection;
+};
+
 const fmt = (n: number) => `$${n.toLocaleString()}`;
+
+const dateValue = (value: string | null) => {
+  if (!value) return null;
+
+  if (/^\d+$/.test(value)) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : null;
+  }
+
+  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (dateOnly) {
+    const [, year, month, day] = dateOnly;
+    return Date.UTC(Number(year), Number(month) - 1, Number(day));
+  }
+
+  const parsed = Date.parse(value);
+  return Number.isNaN(parsed) ? null : parsed;
+};
+
+const fmtDate = (value: string | null) => {
+  const ms = dateValue(value);
+  if (ms === null) return "—";
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(new Date(ms));
+};
+
+const compareText = (a: string, b: string) =>
+  a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
+
+const compareNullable = (
+  aValue: number | string | null,
+  bValue: number | string | null,
+  direction: SortDirection,
+) => {
+  const aMissing = aValue === null || aValue === "";
+  const bMissing = bValue === null || bValue === "";
+
+  if (aMissing && bMissing) return 0;
+  if (aMissing) return 1;
+  if (bMissing) return -1;
+
+  const result =
+    typeof aValue === "string" && typeof bValue === "string"
+      ? compareText(aValue, bValue)
+      : Number(aValue) - Number(bValue);
+
+  return direction === "asc" ? result : -result;
+};
+
+const numericValue = (value: number) =>
+  Number.isFinite(value) && value > 0 ? value : null;
+
+const probabilityValue = (value: number) =>
+  Number.isFinite(value) ? value : null;
+
+const compareDeals = (
+  a: { deal: SalesDeal; index: number },
+  b: { deal: SalesDeal; index: number },
+  sort: DealSort,
+) => {
+  let result = 0;
+
+  if (sort.key === "name") {
+    result = compareNullable(a.deal.name, b.deal.name, sort.direction);
+  } else if (sort.key === "stage") {
+    result = compareNullable(a.deal.stageOrder, b.deal.stageOrder, sort.direction);
+  } else if (sort.key === "effectiveDate") {
+    result = compareNullable(
+      dateValue(a.deal.effectiveDate),
+      dateValue(b.deal.effectiveDate),
+      sort.direction,
+    );
+  } else if (sort.key === "revenue") {
+    result = compareNullable(
+      numericValue(a.deal.revenue),
+      numericValue(b.deal.revenue),
+      sort.direction,
+    );
+  } else if (sort.key === "memberLives") {
+    result = compareNullable(
+      numericValue(a.deal.memberLives),
+      numericValue(b.deal.memberLives),
+      sort.direction,
+    );
+  } else if (sort.key === "probability") {
+    result = compareNullable(
+      probabilityValue(a.deal.probability),
+      probabilityValue(b.deal.probability),
+      sort.direction,
+    );
+  } else if (sort.key === "weightedRevenue") {
+    result = compareNullable(
+      numericValue(a.deal.weightedRevenue),
+      numericValue(b.deal.weightedRevenue),
+      sort.direction,
+    );
+  }
+
+  if (result !== 0) return result;
+
+  return (
+    a.deal.stageOrder - b.deal.stageOrder ||
+    compareText(a.deal.name, b.deal.name) ||
+    a.index - b.index
+  );
+};
 
 // Stage colors — Kyra brand palette progression (early→late pipeline)
 const STAGE_COLORS: Record<string, { bg: string; text: string }> = {
@@ -78,32 +207,148 @@ function StageChart({ stages }: { stages: StageCount[] }) {
   );
 }
 
+function SortHead({
+  sortKey,
+  active,
+  direction,
+  onSort,
+  children,
+  align = "left",
+}: {
+  sortKey: DealSortKey;
+  active: boolean;
+  direction: SortDirection | undefined;
+  onSort: (key: DealSortKey) => void;
+  children: string;
+  align?: "left" | "right";
+}) {
+  const Icon = !active ? ChevronsUpDown : direction === "asc" ? ArrowUp : ArrowDown;
+
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      className={`inline-flex items-center gap-1 rounded-md px-1.5 py-1 text-xs font-medium transition hover:bg-muted hover:text-foreground ${
+        active ? "text-foreground" : "text-muted-foreground"
+      } ${align === "right" ? "ml-auto justify-end" : ""}`}
+    >
+      <span>{children}</span>
+      <Icon className="h-3 w-3" />
+    </button>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Deal table
 // ---------------------------------------------------------------------------
 
 function DealTable({ deals }: { deals: SalesDeal[] }) {
+  const [sort, setSort] = useState<DealSort | null>(null);
+
+  const sortedDeals = useMemo(() => {
+    if (!sort) return deals;
+
+    return deals
+      .map((deal, index) => ({ deal, index }))
+      .sort((a, b) => compareDeals(a, b, sort))
+      .map(({ deal }) => deal);
+  }, [deals, sort]);
+
+  const sortBy = (key: DealSortKey) => {
+    setSort((current) => {
+      if (current?.key === key) {
+        return {
+          key,
+          direction: current.direction === "asc" ? "desc" : "asc",
+        };
+      }
+
+      return { key, direction: "asc" };
+    });
+  };
+
   return (
     <div className="overflow-auto max-h-[320px]">
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="text-xs">Deal</TableHead>
-            <TableHead className="text-xs">Stage</TableHead>
-            <TableHead className="text-xs text-right">Est. ARR</TableHead>
-            <TableHead className="text-xs text-right">Lives</TableHead>
-            <TableHead className="text-xs text-right">Prob.</TableHead>
-            <TableHead className="text-xs text-right">Weighted</TableHead>
+            <TableHead className="text-xs">
+              <SortHead sortKey="name" active={sort?.key === "name"} direction={sort?.direction} onSort={sortBy}>
+                Deal
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs">
+              <SortHead sortKey="stage" active={sort?.key === "stage"} direction={sort?.direction} onSort={sortBy}>
+                Stage
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs">
+              <SortHead
+                sortKey="effectiveDate"
+                active={sort?.key === "effectiveDate"}
+                direction={sort?.direction}
+                onSort={sortBy}
+              >
+                Effective Date
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs text-right">
+              <SortHead
+                sortKey="revenue"
+                active={sort?.key === "revenue"}
+                direction={sort?.direction}
+                onSort={sortBy}
+                align="right"
+              >
+                Est. ARR
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs text-right">
+              <SortHead
+                sortKey="memberLives"
+                active={sort?.key === "memberLives"}
+                direction={sort?.direction}
+                onSort={sortBy}
+                align="right"
+              >
+                Lives
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs text-right">
+              <SortHead
+                sortKey="probability"
+                active={sort?.key === "probability"}
+                direction={sort?.direction}
+                onSort={sortBy}
+                align="right"
+              >
+                Prob.
+              </SortHead>
+            </TableHead>
+            <TableHead className="text-xs text-right">
+              <SortHead
+                sortKey="weightedRevenue"
+                active={sort?.key === "weightedRevenue"}
+                direction={sort?.direction}
+                onSort={sortBy}
+                align="right"
+              >
+                Weighted
+              </SortHead>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {deals.map((d) => (
+          {sortedDeals.map((d) => (
             <TableRow key={d.id}>
               <TableCell className="text-sm font-medium">{d.name}</TableCell>
               <TableCell>
                 <Badge variant="outline" className={`text-[10px] font-normal border-0 ${stageColor(d.stage).bg} ${stageColor(d.stage).text}`}>
                   {d.stage}
                 </Badge>
+              </TableCell>
+              <TableCell className="text-sm whitespace-nowrap">
+                {fmtDate(d.effectiveDate)}
               </TableCell>
               <TableCell className="text-sm text-right tabular-nums">
                 {d.revenue > 0 ? fmt(d.revenue) : "—"}
