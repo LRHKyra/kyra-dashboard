@@ -47,7 +47,11 @@ export default function PipelinePage() {
               title="Channel Development"
               subtitle="Broker and PE partnerships feeding employer pipeline"
             />
-            <ChannelFunnels broker={data.broker} capital={data.capital} />
+            <ChannelFunnels
+              broker={data.broker}
+              capital={data.capital}
+              portalId={data.portalId ?? null}
+            />
           </section>
 
           {/* H2: Employer Pipeline */}

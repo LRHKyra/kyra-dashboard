@@ -31,11 +31,18 @@ export interface StageCount {
   revenue: number;
 }
 
+export interface ChannelDeal {
+  id: string;
+  name: string;
+  createdAt: string | null;
+  lastActivity: string | null;
+}
+
 export interface ChannelStage {
   label: string;
   order: number;
   count: number;
-  deals: string[];
+  deals: ChannelDeal[];
 }
 
 export interface PipelineData {
@@ -55,5 +62,6 @@ export interface PipelineData {
     total: number;
     stages: ChannelStage[];
   };
+  portalId: number | null;
   fetchedAt: string;
 }

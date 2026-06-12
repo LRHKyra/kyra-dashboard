@@ -8,8 +8,13 @@ import {
   Table, TableBody, TableCell, TableHead, TableHeader, TableRow,
 } from "@/components/ui/table";
 import {
-  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
+  BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid, Cell,
 } from "recharts";
+import { StageDealsDialog } from "./stage-deals-dialog";
+import {
+  compareNullable, compareText, dateValue, fmtDate, fmtCurrency as fmt,
+  type SortDirection,
+} from "./format";
 import type { SalesDeal, StageCount } from "./types";
 
 type DealSortKey =
@@ -21,66 +26,9 @@ type DealSortKey =
   | "probability"
   | "weightedRevenue";
 
-type SortDirection = "asc" | "desc";
-
 type DealSort = {
   key: DealSortKey;
   direction: SortDirection;
-};
-
-const fmt = (n: number) => `$${n.toLocaleString()}`;
-
-const dateValue = (value: string | null) => {
-  if (!value) return null;
-
-  if (/^\d+$/.test(value)) {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : null;
-  }
-
-  const dateOnly = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
-  if (dateOnly) {
-    const [, year, month, day] = dateOnly;
-    return Date.UTC(Number(year), Number(month) - 1, Number(day));
-  }
-
-  const parsed = Date.parse(value);
-  return Number.isNaN(parsed) ? null : parsed;
-};
-
-const fmtDate = (value: string | null) => {
-  const ms = dateValue(value);
-  if (ms === null) return "—";
-
-  return new Intl.DateTimeFormat("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(new Date(ms));
-};
-
-const compareText = (a: string, b: string) =>
-  a.localeCompare(b, undefined, { sensitivity: "base", numeric: true });
-
-const compareNullable = (
-  aValue: number | string | null,
-  bValue: number | string | null,
-  direction: SortDirection,
-) => {
-  const aMissing = aValue === null || aValue === "";
-  const bMissing = bValue === null || bValue === "";
-
-  if (aMissing && bMissing) return 0;
-  if (aMissing) return 1;
-  if (bMissing) return -1;
-
-  const result =
-    typeof aValue === "string" && typeof bValue === "string"
-      ? compareText(aValue, bValue)
-      : Number(aValue) - Number(bValue);
-
-  return direction === "asc" ? result : -result;
 };
 
 const numericValue = (value: number) =>
@@ -164,7 +112,13 @@ function stageColor(stage: string) {
 // Stage revenue bar chart
 // ---------------------------------------------------------------------------
 
-function StageChart({ stages }: { stages: StageCount[] }) {
+function StageChart({
+  stages,
+  onStageClick,
+}: {
+  stages: StageCount[];
+  onStageClick: (stageLabel: string) => void;
+}) {
   const data = stages.map((s) => ({
     name: s.label,
     revenue: Math.round(s.revenue / 1000 * 10) / 10, // in $K
@@ -192,6 +146,7 @@ function StageChart({ stages }: { stages: StageCount[] }) {
           tickFormatter={(v) => `$${v}K`}
         />
         <Tooltip
+          separator=""
           contentStyle={{
             backgroundColor: "var(--card)",
             border: "1px solid var(--border)",
@@ -199,9 +154,26 @@ function StageChart({ stages }: { stages: StageCount[] }) {
             fontSize: 12,
           }}
           // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          formatter={(value: any) => [`$${value}K`, "Est. Annual Revenue"]}
+          formatter={(value: any, _name: any, entry: any) => {
+            const deals = entry?.payload?.deals ?? 0;
+            return [`$${value}K · ${deals} ${deals === 1 ? "deal" : "deals"} — click to view`, ""];
+          }}
         />
-        <Bar dataKey="revenue" fill="var(--primary)" radius={[4, 4, 0, 0]} barSize={36} />
+        <Bar
+          dataKey="revenue"
+          fill="var(--primary)"
+          radius={[4, 4, 0, 0]}
+          barSize={36}
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          onClick={(entry: any) => {
+            const name: string | undefined = entry?.payload?.name ?? entry?.name;
+            if (name) onStageClick(name);
+          }}
+        >
+          {data.map((d, i) => (
+            <Cell key={i} fill="var(--primary)" cursor="pointer" />
+          ))}
+        </Bar>
       </BarChart>
     </ResponsiveContainer>
   );
@@ -383,8 +355,15 @@ export function EmployerPipeline({
     stageChart: StageCount[];
   };
 }) {
+  const [selectedStage, setSelectedStage] = useState<string | null>(null);
+
   const totalOpen = sales.open.reduce((s, d) => s + d.revenue, 0);
   const totalWeighted = sales.open.reduce((s, d) => s + d.weightedRevenue, 0);
+
+  const stageDeals = useMemo(
+    () => (selectedStage ? sales.open.filter((d) => d.stage === selectedStage) : []),
+    [sales.open, selectedStage],
+  );
 
   return (
     <div className="space-y-4">
@@ -395,7 +374,7 @@ export function EmployerPipeline({
             <CardTitle className="text-sm font-semibold">Revenue by Stage</CardTitle>
           </CardHeader>
           <CardContent className="px-3 pb-3">
-            <StageChart stages={sales.stageChart} />
+            <StageChart stages={sales.stageChart} onStageClick={setSelectedStage} />
           </CardContent>
         </Card>
 
@@ -435,6 +414,19 @@ export function EmployerPipeline({
           <DealTable deals={sales.open} />
         </CardContent>
       </Card>
+
+      {/* Stage drill-down */}
+      <StageDealsDialog
+        open={selectedStage !== null}
+        onOpenChange={(open) => {
+          if (!open) setSelectedStage(null);
+        }}
+        title={selectedStage ? `Employer Pipeline — ${selectedStage}` : ""}
+        count={stageDeals.length}
+        maxWidthClass="sm:max-w-5xl"
+      >
+        <DealTable deals={stageDeals} />
+      </StageDealsDialog>
     </div>
   );
 }

@@ -66,6 +66,29 @@ async function hubspotSearch(token: string, objectType: string, body: Record<str
   return res.json();
 }
 
+// Portal ID is stable per HubSpot account — fetch once per server process.
+let cachedPortalId: number | null = null;
+
+async function fetchPortalId(token: string): Promise<number | null> {
+  if (cachedPortalId !== null) return cachedPortalId;
+  try {
+    const res = await fetch(`${HUBSPOT_BASE}/account-info/v3/details`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (!res.ok) {
+      console.error(`HubSpot account-info ${res.status}: ${await res.text()}`);
+      return null;
+    }
+    const data = await res.json();
+    const portalId = typeof data.portalId === "number" ? data.portalId : null;
+    cachedPortalId = portalId;
+    return portalId;
+  } catch (err) {
+    console.error("HubSpot portal ID fetch error:", err);
+    return null;
+  }
+}
+
 async function fetchAllDeals(token: string, pipelineId: string, properties: string[]) {
   const deals: Record<string, unknown>[] = [];
   let after: string | undefined;
@@ -102,13 +125,15 @@ export async function GET() {
       "hs_deal_stage_probability", "closedate",
       "renewal_date",
       "hubspot_owner_id",
+      "createdate", "notes_last_updated",
     ];
 
-    // Fetch all three pipelines in parallel
-    const [salesDeals, brokerDeals, capitalDeals] = await Promise.all([
+    // Fetch all three pipelines (and portal ID for deal links) in parallel
+    const [salesDeals, brokerDeals, capitalDeals, portalId] = await Promise.all([
       fetchAllDeals(token, PIPELINES.sales, dealProps),
       fetchAllDeals(token, PIPELINES.brokerOutreach, dealProps),
       fetchAllDeals(token, PIPELINES.capital, dealProps),
+      fetchPortalId(token),
     ]);
 
     // ----- Process Sales Pipeline -----
@@ -154,34 +179,47 @@ export async function GET() {
       }
     }
 
-    // ----- Process Broker Pipeline -----
-    const brokerByStage: Record<string, { label: string; order: number; count: number; deals: string[] }> = {};
-    for (const deal of brokerDeals) {
-      const props = (deal as { properties: Record<string, string> }).properties;
-      const stageId = props.dealstage;
-      const stageInfo = BROKER_STAGES[stageId] || { label: stageId, order: 99 };
-      if (!brokerByStage[stageId]) {
-        brokerByStage[stageId] = { label: stageInfo.label, order: stageInfo.order, count: 0, deals: [] };
-      }
-      brokerByStage[stageId].count++;
-      brokerByStage[stageId].deals.push(props.dealname?.replace(" - Broker Outreach", "") || "Unknown");
+    // ----- Process Broker & Capital Pipelines -----
+    interface ChannelDeal {
+      id: string;
+      name: string;
+      createdAt: string | null;
+      lastActivity: string | null;
     }
 
-    // ----- Process Capital Pipeline -----
-    const capitalByStage: Record<string, { label: string; order: number; count: number; deals: string[] }> = {};
-    for (const deal of capitalDeals) {
-      const props = (deal as { properties: Record<string, string> }).properties;
-      const stageId = props.dealstage;
-      const stageInfo = CAPITAL_STAGES[stageId] || { label: stageId, order: 99 };
-      if (!capitalByStage[stageId]) {
-        capitalByStage[stageId] = { label: stageInfo.label, order: stageInfo.order, count: 0, deals: [] };
+    const groupChannelDeals = (
+      deals: Record<string, unknown>[],
+      stageMap: Record<string, { label: string; order: number }>,
+      stripSuffixes: string[],
+    ) => {
+      const byStage: Record<string, { label: string; order: number; count: number; deals: ChannelDeal[] }> = {};
+      for (const deal of deals) {
+        const props = (deal as { properties: Record<string, string> }).properties;
+        const stageId = props.dealstage;
+        const stageInfo = stageMap[stageId] || { label: stageId, order: 99 };
+        if (!byStage[stageId]) {
+          byStage[stageId] = { label: stageInfo.label, order: stageInfo.order, count: 0, deals: [] };
+        }
+        byStage[stageId].count++;
+        const name = stripSuffixes.reduce(
+          (n, suffix) => n.replace(suffix, ""),
+          props.dealname || "Unknown",
+        );
+        byStage[stageId].deals.push({
+          id: (deal as { id: string }).id,
+          name,
+          createdAt: props.createdate || null,
+          lastActivity: props.notes_last_updated || null,
+        });
       }
-      capitalByStage[stageId].count++;
-      const name = props.dealname
-        ?.replace(" - PE Channel Partner", "")
-        .replace(" - PE Partnership", "") || "Unknown";
-      capitalByStage[stageId].deals.push(name);
-    }
+      return byStage;
+    };
+
+    const brokerByStage = groupChannelDeals(brokerDeals, BROKER_STAGES, [" - Broker Outreach"]);
+    const capitalByStage = groupChannelDeals(capitalDeals, CAPITAL_STAGES, [
+      " - PE Channel Partner",
+      " - PE Partnership",
+    ]);
 
     // ----- Compute summary metrics -----
     const wonArr = salesWon as { revenue: number; memberLives: number }[];
@@ -230,6 +268,7 @@ export async function GET() {
         total: capitalDeals.length,
         stages: Object.values(capitalByStage).sort((a, b) => a.order - b.order),
       },
+      portalId,
       fetchedAt: new Date().toISOString(),
     });
   } catch (err) {
