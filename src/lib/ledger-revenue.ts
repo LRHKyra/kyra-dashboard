@@ -150,9 +150,13 @@ export function attachLedgerToWonDeals(
 
   const deals = wonDeals.map((deal) => {
     const companyIds = dealCompanyIds[deal.id] ?? [];
+    // A deal can be associated with duplicate company records (one empty, one
+    // carrying the ledger employer) — pick the matching employer with the
+    // highest run-rate rather than the first association returned.
     const match = companyIds
       .map((id) => employersByCompanyId.get(id))
-      .find((e) => e !== undefined);
+      .filter((e) => e !== undefined)
+      .sort((a, b) => b.annualRunRateCents - a.annualRunRateCents)[0];
 
     if (!match) {
       return { ...deal, revenueSource: "hubspot-fallback" as const };

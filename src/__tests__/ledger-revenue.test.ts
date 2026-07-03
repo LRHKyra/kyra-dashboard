@@ -124,6 +124,32 @@ describe("attachLedgerToWonDeals", () => {
     expect(deals[0].liveEmployees).toBeUndefined();
   });
 
+  it("prefers the highest-run-rate employer when a deal matches duplicate company records", () => {
+    const withDuplicate: LedgerRevenueSummary = {
+      ...ledger,
+      employers: [
+        {
+          ...ledger.employers[0],
+          employerId: "emp-empty",
+          hubspotCompanyId: "563",
+          liveEmployees: 0,
+          memberLives: 0,
+          annualRunRateCents: 0,
+        },
+        ledger.employers[0],
+      ],
+    };
+    const { deals } = attachLedgerToWonDeals(
+      [wonDeal({})],
+      // empty duplicate listed first in the association order
+      { "d-1": ["563", "56399357762"] },
+      withDuplicate,
+    );
+    expect(deals[0].revenueSource).toBe("ledger");
+    expect(deals[0].liveEmployees).toBe(46);
+    expect(deals[0].revenue).toBeCloseTo((365_160 * 12) / 100, 2);
+  });
+
   it("reports ledger employers with revenue that match no closed-won deal", () => {
     const { unmatchedLedgerEmployers } = attachLedgerToWonDeals(
       [wonDeal({})],
