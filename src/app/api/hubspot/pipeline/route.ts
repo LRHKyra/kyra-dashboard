@@ -1,4 +1,12 @@
 import { NextResponse } from "next/server";
+import {
+  attachLedgerToWonDeals,
+  buildLedgerSummaryPatch,
+  fetchDealCompanyAssociations,
+  fetchLedgerRevenueSummary,
+  type LedgerRevenueSummary,
+} from "@/lib/ledger-revenue";
+import type { SalesDeal } from "@/components/pipeline/types";
 
 // ---------------------------------------------------------------------------
 // HubSpot pipeline IDs & stage mappings (from Kyra's HubSpot instance)
@@ -128,12 +136,24 @@ export async function GET() {
       "createdate", "notes_last_updated",
     ];
 
-    // Fetch all three pipelines (and portal ID for deal links) in parallel
-    const [salesDeals, brokerDeals, capitalDeals, portalId] = await Promise.all([
+    // Commission ledger is the source of truth for contracted revenue.
+    // Any failure degrades to HubSpot fallback values with a visible warning.
+    const ledgerBaseUrl = process.env.LEDGER_API_URL;
+    let ledgerError: string | null = ledgerBaseUrl ? null : "LEDGER_API_URL not configured";
+
+    // Fetch all three pipelines, portal ID, and ledger summary in parallel
+    const [salesDeals, brokerDeals, capitalDeals, portalId, ledger] = await Promise.all([
       fetchAllDeals(token, PIPELINES.sales, dealProps),
       fetchAllDeals(token, PIPELINES.brokerOutreach, dealProps),
       fetchAllDeals(token, PIPELINES.capital, dealProps),
       fetchPortalId(token),
+      ledgerBaseUrl
+        ? fetchLedgerRevenueSummary(ledgerBaseUrl).catch((err): LedgerRevenueSummary | null => {
+            console.error("Ledger revenue-summary fetch error:", err);
+            ledgerError = err instanceof Error ? err.message : "Ledger unreachable";
+            return null;
+          })
+        : Promise.resolve<LedgerRevenueSummary | null>(null),
     ]);
 
     // ----- Process Sales Pipeline -----
@@ -163,6 +183,7 @@ export async function GET() {
         sourceChannel: props.source_channel || "Unknown",
         closeDate: props.closedate || null,
         effectiveDate: props.renewal_date || null,
+        revenueSource: "hubspot-fallback" as const,
       };
 
       if (stageInfo.bucket === "won") salesWon.push(mapped);
@@ -221,15 +242,58 @@ export async function GET() {
       " - PE Partnership",
     ]);
 
-    // ----- Compute summary metrics -----
-    const wonArr = salesWon as { revenue: number; memberLives: number }[];
-    const openArr = salesOpen as { revenue: number; weightedRevenue: number }[];
+    // ----- Merge ledger truth into won deals -----
+    let wonDeals = salesWon as SalesDeal[];
+    let unmatchedLedgerEmployers: string[] = [];
+    if (ledger) {
+      const associations = await fetchDealCompanyAssociations(
+        token,
+        wonDeals.map((d) => d.id),
+      ).catch((err): Record<string, string[]> | null => {
+        console.error("HubSpot deal-company associations error:", err);
+        ledgerError = "Deal-company associations unavailable; per-deal figures show HubSpot values";
+        return null;
+      });
+      if (associations) {
+        ({ deals: wonDeals, unmatchedLedgerEmployers } = attachLedgerToWonDeals(
+          wonDeals,
+          associations,
+          ledger,
+        ));
+      }
+    }
 
-    const contractedARR = wonArr.reduce((s, d) => s + d.revenue, 0);
-    const totalLives = wonArr.reduce((s, d) => s + d.memberLives, 0);
+    // ----- Compute summary metrics -----
+    // Open/weighted pipeline stay HubSpot-based: they forecast unclosed deals.
+    const openArr = salesOpen as { revenue: number; weightedRevenue: number }[];
     const openPipeline = openArr.reduce((s, d) => s + d.revenue, 0);
     const weightedPipeline = openArr.reduce((s, d) => s + d.weightedRevenue, 0);
-    const avgPEPM = totalLives > 0 ? contractedARR / totalLives / 12 : 0;
+
+    // Contracted revenue comes from the ledger; HubSpot deal fields are the
+    // degraded fallback (estimated_annual_revenue is a static calculated
+    // property in HubSpot, not real revenue).
+    const fallbackARR = wonDeals.reduce((s, d) => s + (d.revenueSource === "ledger" ? 0 : d.revenue), 0);
+    const fallbackLives = wonDeals.reduce((s, d) => s + d.memberLives, 0);
+    const ledgerPatch = ledger ? buildLedgerSummaryPatch(ledger) : null;
+
+    const contractedSummary = ledgerPatch
+      ? {
+          contractedARR: ledgerPatch.contractedARR,
+          totalLives: ledgerPatch.totalLives,
+          liveEmployees: ledgerPatch.liveEmployees,
+          avgPEPM: ledgerPatch.avgPEPM,
+          revenueBreakdown: ledgerPatch.revenueBreakdown,
+          dataQuality: {
+            ...ledgerPatch.dataQuality,
+            hubspotFallbackDeals: wonDeals.filter((d) => d.revenueSource !== "ledger").length,
+            unmatchedLedgerEmployers,
+          },
+        }
+      : {
+          contractedARR: fallbackARR,
+          totalLives: fallbackLives,
+          avgPEPM: fallbackLives > 0 ? Math.round((fallbackARR / fallbackLives / 12) * 100) / 100 : 0,
+        };
 
     // Count active partners (not Closed Lost stage)
     const activeBrokers = brokerDeals.filter((d) => {
@@ -244,18 +308,17 @@ export async function GET() {
 
     return NextResponse.json({
       summary: {
-        contractedARR,
-        totalLives,
-        avgPEPM: Math.round(avgPEPM * 100) / 100,
+        ...contractedSummary,
         openPipeline,
         weightedPipeline,
         openDealCount: salesOpen.length,
         activeBrokers,
         activePE,
+        ledgerError,
       },
       sales: {
         open: (salesOpen as { stageOrder: number }[]).sort((a, b) => a.stageOrder - b.stageOrder),
-        won: salesWon,
+        won: wonDeals,
         lost: salesLost,
         future: salesFuture,
         stageChart: Object.values(stageSummary).sort((a, b) => a.order - b.order),
