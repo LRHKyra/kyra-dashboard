@@ -1,12 +1,34 @@
+export interface RevenueBreakdown {
+  platformFees: number;
+  commissions: number;
+  ccFees: number;
+}
+
+export interface PipelineDataQuality {
+  coveragesMissingContractRule: number;
+  coveragesUnlinked: number;
+  unattributedCoverages: number;
+  unattributedMemberLives: number;
+  hubspotFallbackDeals: number;
+  unmatchedLedgerEmployers: string[];
+}
+
 export interface PipelineSummary {
   contractedARR: number;
   totalLives: number;
+  /** Employees with billable coverage this month (from the commission ledger). */
+  liveEmployees?: number;
   avgPEPM: number;
+  /** Annualized ARR composition (from the commission ledger). */
+  revenueBreakdown?: RevenueBreakdown;
   openPipeline: number;
   weightedPipeline: number;
   openDealCount: number;
   activeBrokers: number;
   activePE: number;
+  /** Set when the commission ledger was unreachable and HubSpot fallback values are shown. */
+  ledgerError?: string | null;
+  dataQuality?: PipelineDataQuality;
 }
 
 export interface SalesDeal {
@@ -22,6 +44,10 @@ export interface SalesDeal {
   sourceChannel: string;
   closeDate: string | null;
   effectiveDate: string | null;
+  /** Where the revenue figure came from. Ledger is source of truth for won deals. */
+  revenueSource: "ledger" | "hubspot-fallback";
+  liveEmployees?: number;
+  revenueBreakdown?: RevenueBreakdown;
 }
 
 export interface StageCount {

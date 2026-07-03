@@ -11,7 +11,10 @@ const kpis = (s: PipelineSummary) => [
   {
     label: "Contracted ARR",
     value: fmt(s.contractedARR),
-    sub: `${s.totalLives} member lives`,
+    sub:
+      s.liveEmployees != null
+        ? `${s.liveEmployees} live employees · ${s.totalLives} member lives`
+        : `${s.totalLives} member lives`,
     icon: DollarSign,
     color: "text-emerald-600",
     bg: "bg-emerald-50",
