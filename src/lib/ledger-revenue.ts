@@ -135,11 +135,19 @@ export function buildLedgerSummaryPatch(ledger: LedgerRevenueSummary): LedgerSum
   };
 }
 
+export interface UnlinkedLedgerEmployer {
+  name: string;
+  revenue: number;
+  liveEmployees: number;
+  memberLives: number;
+  revenueBreakdown: RevenueBreakdown;
+}
+
 export function attachLedgerToWonDeals(
   wonDeals: readonly SalesDeal[],
   dealCompanyIds: Record<string, string[]>,
   ledger: LedgerRevenueSummary,
-): { deals: SalesDeal[]; unmatchedLedgerEmployers: string[] } {
+): { deals: SalesDeal[]; unlinkedEmployers: UnlinkedLedgerEmployer[] } {
   const employersByCompanyId = new Map(
     ledger.employers
       .filter((e) => e.hubspotCompanyId)
@@ -178,16 +186,28 @@ export function attachLedgerToWonDeals(
   });
 
   // Ledger employers generating revenue that no closed-won deal claims —
-  // usually a missing deal↔company association in HubSpot.
-  const unmatchedLedgerEmployers = ledger.employers
+  // usually the deal is associated with a duplicate HubSpot company record
+  // while the employees (and thus the ledger employer) live on another.
+  // Returned with full figures so the table can reconcile to ledger totals.
+  const unlinkedEmployers = ledger.employers
     .filter(
       (e) =>
         !matchedEmployerIds.has(e.employerId) &&
         (e.annualRunRateCents > 0 || e.liveEmployees > 0),
     )
-    .map((e) => e.displayName);
+    .map((e) => ({
+      name: e.displayName,
+      revenue: centsToDollars(e.annualRunRateCents),
+      liveEmployees: e.liveEmployees,
+      memberLives: e.memberLives,
+      revenueBreakdown: {
+        platformFees: annualDollars(e.monthly.platformFeeCents),
+        commissions: annualDollars(e.monthly.commissionCents + e.monthly.overrideCents),
+        ccFees: annualDollars(e.monthly.ccFeeEstimateCents),
+      },
+    }));
 
-  return { deals, unmatchedLedgerEmployers };
+  return { deals, unlinkedEmployers };
 }
 
 // ---------------------------------------------------------------------------

@@ -71,11 +71,21 @@ export interface ChannelStage {
   deals: ChannelDeal[];
 }
 
+export interface UnlinkedLedgerEmployer {
+  name: string;
+  revenue: number;
+  liveEmployees: number;
+  memberLives: number;
+  revenueBreakdown: RevenueBreakdown;
+}
+
 export interface PipelineData {
   summary: PipelineSummary;
   sales: {
     open: SalesDeal[];
     won: SalesDeal[];
+    /** Ledger employers with revenue whose company record isn't linked to any closed-won deal. */
+    unlinkedEmployers?: UnlinkedLedgerEmployer[];
     lost: SalesDeal[];
     future: SalesDeal[];
     stageChart: StageCount[];

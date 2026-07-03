@@ -151,12 +151,17 @@ describe("attachLedgerToWonDeals", () => {
   });
 
   it("reports ledger employers with revenue that match no closed-won deal", () => {
-    const { unmatchedLedgerEmployers } = attachLedgerToWonDeals(
+    const { unlinkedEmployers } = attachLedgerToWonDeals(
       [wonDeal({})],
       { "d-1": ["56399357762"] },
       ledger,
     );
-    expect(unmatchedLedgerEmployers).toEqual(["Orphan Employer LLC"]);
+    expect(unlinkedEmployers).toHaveLength(1);
+    expect(unlinkedEmployers[0].name).toBe("Orphan Employer LLC");
+    expect(unlinkedEmployers[0].revenue).toBeCloseTo((31_500 * 12) / 100, 2);
+    expect(unlinkedEmployers[0].liveEmployees).toBe(5);
+    expect(unlinkedEmployers[0].memberLives).toBe(9);
+    expect(unlinkedEmployers[0].revenueBreakdown.platformFees).toBeCloseTo((17_500 * 12) / 100, 2);
   });
 
   it("does not mutate the input deals", () => {

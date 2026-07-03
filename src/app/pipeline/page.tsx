@@ -71,6 +71,7 @@ export default function PipelinePage() {
             />
             <ContractedRevenue
               won={data.sales.won}
+              unlinkedEmployers={data.sales.unlinkedEmployers}
               summary={data.summary}
             />
           </section>

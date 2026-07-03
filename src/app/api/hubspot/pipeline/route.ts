@@ -244,7 +244,7 @@ export async function GET() {
 
     // ----- Merge ledger truth into won deals -----
     let wonDeals = salesWon as SalesDeal[];
-    let unmatchedLedgerEmployers: string[] = [];
+    let unlinkedEmployers: ReturnType<typeof attachLedgerToWonDeals>["unlinkedEmployers"] = [];
     if (ledger) {
       const associations = await fetchDealCompanyAssociations(
         token,
@@ -255,7 +255,7 @@ export async function GET() {
         return null;
       });
       if (associations) {
-        ({ deals: wonDeals, unmatchedLedgerEmployers } = attachLedgerToWonDeals(
+        ({ deals: wonDeals, unlinkedEmployers } = attachLedgerToWonDeals(
           wonDeals,
           associations,
           ledger,
@@ -286,7 +286,7 @@ export async function GET() {
           dataQuality: {
             ...ledgerPatch.dataQuality,
             hubspotFallbackDeals: wonDeals.filter((d) => d.revenueSource !== "ledger").length,
-            unmatchedLedgerEmployers,
+            unmatchedLedgerEmployers: unlinkedEmployers.map((e) => e.name),
           },
         }
       : {
@@ -319,6 +319,7 @@ export async function GET() {
       sales: {
         open: (salesOpen as { stageOrder: number }[]).sort((a, b) => a.stageOrder - b.stageOrder),
         won: wonDeals,
+        unlinkedEmployers,
         lost: salesLost,
         future: salesFuture,
         stageChart: Object.values(stageSummary).sort((a, b) => a.order - b.order),
