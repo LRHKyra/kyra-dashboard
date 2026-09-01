@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  assessCommissionAccrual,
   attachLedgerToWonDeals,
   buildLedgerSummaryPatch,
   type LedgerRevenueSummary,
@@ -169,5 +170,65 @@ describe("attachLedgerToWonDeals", () => {
     const frozen = Object.freeze({ ...deal });
     attachLedgerToWonDeals([frozen], { "d-1": ["56399357762"] }, ledger);
     expect(frozen.revenue).toBe(51_072);
+  });
+});
+
+describe("assessCommissionAccrual", () => {
+  const withTotals = (
+    overrides: Partial<LedgerRevenueSummary["totals"]>,
+  ): LedgerRevenueSummary => ({
+    ...ledger,
+    totals: { ...ledger.totals, ...overrides },
+  });
+
+  it("reports complete when commissions accrued for the month", () => {
+    expect(assessCommissionAccrual(ledger).status).toBe("complete");
+  });
+
+  it("reports missing when a live book has zero commission dollars", () => {
+    // The 2026-09-01 incident: the nightly sync never ran, so no entitlement
+    // lines existed for the month and every commission read $0.
+    const notAccrued = withTotals({
+      monthly: { ...ledger.totals.monthly, commissionCents: 0, overrideCents: 0 },
+      dataQuality: { coveragesMissingContractRule: 51, coveragesUnlinked: 0 },
+    });
+    const accrual = assessCommissionAccrual(notAccrued);
+    expect(accrual.status).toBe("missing");
+    expect(accrual.liveEmployees).toBe(51);
+    expect(accrual.accruedCoverages).toBe(0);
+    expect(accrual.month).toBe("2026-07");
+  });
+
+  it("reports partial when most coverages lack an accrued line", () => {
+    const halfAccrued = withTotals({
+      dataQuality: { coveragesMissingContractRule: 40, coveragesUnlinked: 0 },
+    });
+    expect(assessCommissionAccrual(halfAccrued).status).toBe("partial");
+  });
+
+  it("treats the routine missing-rule baseline as complete", () => {
+    // 17 of 111 coverages genuinely have no contract rule — normal, not an outage.
+    const baseline = withTotals({
+      dataQuality: { coveragesMissingContractRule: 17, coveragesUnlinked: 5 },
+    });
+    expect(assessCommissionAccrual(baseline).status).toBe("complete");
+  });
+
+  it("reports complete for an empty book rather than flagging an outage", () => {
+    const empty = withTotals({
+      liveEmployees: 0,
+      monthly: { ...ledger.totals.monthly, commissionCents: 0, overrideCents: 0 },
+      dataQuality: { coveragesMissingContractRule: 0, coveragesUnlinked: 0 },
+    });
+    expect(assessCommissionAccrual(empty).status).toBe("complete");
+  });
+
+  it("surfaces the assessment on the summary patch", () => {
+    const notAccrued = withTotals({
+      monthly: { ...ledger.totals.monthly, commissionCents: 0, overrideCents: 0 },
+      dataQuality: { coveragesMissingContractRule: 51, coveragesUnlinked: 0 },
+    });
+    expect(buildLedgerSummaryPatch(notAccrued).commissionAccrual.status).toBe("missing");
+    expect(buildLedgerSummaryPatch(ledger).commissionAccrual.status).toBe("complete");
   });
 });

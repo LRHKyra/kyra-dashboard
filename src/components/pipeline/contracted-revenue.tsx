@@ -69,9 +69,18 @@ export function ContractedRevenue({
 }) {
   const breakdown = summary.revenueBreakdown;
   const dq = summary.dataQuality;
+  const accrual = summary.commissionAccrual;
+  // When the month's entitlement lines have not been generated, every
+  // ledger-derived figure below is short the entire commission component.
+  // Say so loudly rather than rendering a confident number that is ~40% low.
+  const accrualIncomplete = accrual != null && accrual.status !== "complete";
   const dqIssues = dq
     ? [
-        dq.coveragesMissingContractRule > 0 &&
+        // Suppressed while accrual is incomplete: the banner already explains
+        // the $0 commissions, and "missing contract rules" misattributes an
+        // un-run job to the contract data.
+        !accrualIncomplete &&
+          dq.coveragesMissingContractRule > 0 &&
           `${dq.coveragesMissingContractRule} enrolled coverages missing commission contract rules (commissions read as $0)`,
         dq.coveragesUnlinked > 0 &&
           `${dq.coveragesUnlinked} coverages linked to an employer but not billable`,
@@ -104,16 +113,23 @@ export function ContractedRevenue({
       label: "Live Employees",
       value: summary.liveEmployees != null ? String(summary.liveEmployees) : "—",
       sub: "Billable this month",
+      muted: false,
     },
     {
       label: "Member Lives",
       value: String(summary.totalLives),
       sub: "Employees + dependents",
+      muted: false,
     },
     {
       label: "Avg PEPM",
-      value: `$${summary.avgPEPM.toFixed(2)}`,
-      sub: summary.liveEmployees ? "Per employee per month" : "Per member (fallback)",
+      value: accrualIncomplete ? `$${summary.avgPEPM.toFixed(2)}*` : `$${summary.avgPEPM.toFixed(2)}`,
+      sub: accrualIncomplete
+        ? "Platform + card fees only"
+        : summary.liveEmployees
+          ? "Per employee per month"
+          : "Per member (fallback)",
+      muted: accrualIncomplete,
     },
   ];
 
@@ -130,13 +146,37 @@ export function ContractedRevenue({
         </div>
       )}
 
+      {/* Commission accrual gap — ARR/PEPM below are missing commissions entirely */}
+      {accrualIncomplete && accrual && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800">
+          <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            <span className="font-semibold">
+              {accrual.status === "missing"
+                ? `Commissions for ${accrual.month} have not been accrued yet.`
+                : `Commissions for ${accrual.month} are only partly accrued (${accrual.accruedCoverages} of ${accrual.liveEmployees} coverages).`}
+            </span>{" "}
+            Contracted ARR, Avg PEPM and the revenue mix below exclude the carrier-commission
+            component and are understated. The ledger materializes each month&apos;s entitlement
+            lines on its nightly HubSpot sync — if this persists, that sync has not run.
+          </span>
+        </div>
+      )}
+
       {/* Metric cards: ARR with revenue-mix visualization, then counts */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="py-0 gap-0">
           <CardContent className="p-4">
-            <p className="text-xs text-muted-foreground mb-1">Contracted ARR</p>
-            <p className="text-3xl font-bold text-emerald-600 tracking-tight">
+            <p className="text-xs text-muted-foreground mb-1">
+              Contracted ARR{accrualIncomplete && " (excl. commissions)"}
+            </p>
+            <p
+              className={`text-3xl font-bold tracking-tight ${
+                accrualIncomplete ? "text-muted-foreground" : "text-emerald-600"
+              }`}
+            >
               {fmt(summary.contractedARR)}
+              {accrualIncomplete && "*"}
             </p>
             {breakdown && (
               <div className="mt-3 space-y-2">
@@ -151,7 +191,11 @@ export function ContractedRevenue({
             <Card key={m.label} className="py-0 gap-0">
               <CardContent className="p-4">
                 <p className="text-xs text-muted-foreground mb-1">{m.label}</p>
-                <p className="text-2xl font-bold text-foreground">{m.value}</p>
+                <p
+                  className={`text-2xl font-bold ${m.muted ? "text-muted-foreground" : "text-foreground"}`}
+                >
+                  {m.value}
+                </p>
                 <p className="text-[11px] text-muted-foreground mt-0.5">{m.sub}</p>
               </CardContent>
             </Card>

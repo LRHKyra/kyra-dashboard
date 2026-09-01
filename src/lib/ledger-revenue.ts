@@ -73,14 +73,42 @@ export interface PipelineDataQuality {
   unmatchedLedgerEmployers: string[];
 }
 
+/**
+ * Whether the ledger has accrued this month's carrier-commission entitlement
+ * lines yet. Entitlements are materialized per service month by the ledger's
+ * nightly HubSpot sync; until that runs, commissions read $0 and every
+ * ledger-derived figure here (ARR, PEPM, revenue mix) understates reality by
+ * the whole commission component. Callers must not present those figures as
+ * final while this reads "missing".
+ */
+export type CommissionAccrualStatus = "complete" | "partial" | "missing";
+
+export interface CommissionAccrual {
+  status: CommissionAccrualStatus;
+  /** Service month the ledger reported, YYYY-MM. */
+  month: string;
+  liveEmployees: number;
+  /** Live coverages that do have an accrued entitlement line. */
+  accruedCoverages: number;
+}
+
 export interface LedgerSummaryPatch {
   contractedARR: number;
   totalLives: number;
   liveEmployees: number;
   avgPEPM: number;
   revenueBreakdown: RevenueBreakdown;
+  commissionAccrual: CommissionAccrual;
   dataQuality: Omit<PipelineDataQuality, "hubspotFallbackDeals" | "unmatchedLedgerEmployers">;
 }
+
+/**
+ * Above this share of live coverages lacking an entitlement line, the month's
+ * commission figure is too incomplete to read as a run rate. A routine
+ * baseline of genuinely rule-less coverages sits well under it (17/111 on
+ * 2026-09), so normal operation stays "complete".
+ */
+const PARTIAL_ACCRUAL_THRESHOLD = 0.5;
 
 const round2 = (n: number) => Math.round(n * 100) / 100;
 const centsToDollars = (cents: number) => round2(cents / 100);
@@ -113,11 +141,39 @@ export async function fetchLedgerRevenueSummary(baseUrl: string): Promise<Ledger
 // Pure merge logic
 // ---------------------------------------------------------------------------
 
+/**
+ * Classify the month's commission accrual from the ledger totals alone.
+ *
+ * A live book reporting exactly zero commission dollars is the unambiguous
+ * signature of an un-accrued month — it is what the 2026-09-01 outage looked
+ * like after the nightly sync failed for seven consecutive nights. Anything
+ * short of that falls back to the share of live coverages with no accrued line.
+ */
+export function assessCommissionAccrual(ledger: LedgerRevenueSummary): CommissionAccrual {
+  const { totals } = ledger;
+  const { liveEmployees } = totals;
+  const missingRule = totals.dataQuality.coveragesMissingContractRule;
+  const accruedCoverages = Math.max(0, liveEmployees - missingRule);
+  const commissionCents = totals.monthly.commissionCents + totals.monthly.overrideCents;
+
+  const status: CommissionAccrualStatus =
+    liveEmployees === 0
+      ? "complete" // nothing to accrue — not an outage
+      : commissionCents === 0
+        ? "missing"
+        : missingRule / liveEmployees > PARTIAL_ACCRUAL_THRESHOLD
+          ? "partial"
+          : "complete";
+
+  return { status, month: ledger.month, liveEmployees, accruedCoverages };
+}
+
 export function buildLedgerSummaryPatch(ledger: LedgerRevenueSummary): LedgerSummaryPatch {
   const { totals, unattributed } = ledger;
   const contractedARR = centsToDollars(totals.annualRunRateCents);
   return {
     contractedARR,
+    commissionAccrual: assessCommissionAccrual(ledger),
     totalLives: totals.memberLives,
     liveEmployees: totals.liveEmployees,
     avgPEPM: totals.liveEmployees > 0 ? round2(contractedARR / totals.liveEmployees / 12) : 0,

@@ -13,6 +13,14 @@ export interface PipelineDataQuality {
   unmatchedLedgerEmployers: string[];
 }
 
+/** Mirrors CommissionAccrual in @/lib/ledger-revenue. */
+export interface CommissionAccrual {
+  status: "complete" | "partial" | "missing";
+  month: string;
+  liveEmployees: number;
+  accruedCoverages: number;
+}
+
 export interface PipelineSummary {
   contractedARR: number;
   totalLives: number;
@@ -21,6 +29,12 @@ export interface PipelineSummary {
   avgPEPM: number;
   /** Annualized ARR composition (from the commission ledger). */
   revenueBreakdown?: RevenueBreakdown;
+  /**
+   * Whether the ledger has accrued this month's commission entitlements.
+   * When not "complete", contractedARR / avgPEPM / revenueBreakdown are
+   * missing the commission component and must not be shown as final.
+   */
+  commissionAccrual?: CommissionAccrual;
   openPipeline: number;
   weightedPipeline: number;
   openDealCount: number;

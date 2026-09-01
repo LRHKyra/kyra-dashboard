@@ -283,6 +283,7 @@ export async function GET() {
           liveEmployees: ledgerPatch.liveEmployees,
           avgPEPM: ledgerPatch.avgPEPM,
           revenueBreakdown: ledgerPatch.revenueBreakdown,
+          commissionAccrual: ledgerPatch.commissionAccrual,
           dataQuality: {
             ...ledgerPatch.dataQuality,
             hubspotFallbackDeals: wonDeals.filter((d) => d.revenueSource !== "ledger").length,
